@@ -1,9 +1,6 @@
 import pandas as pd
+import yfinance as yf
 import numpy as np
-import wrds
-
-# Connect to WRDS
-db = wrds.Connection()
 
 # Screening criteria:
 pe_ratio_max = 20
@@ -13,22 +10,20 @@ debt_ratio = 0.33
 sector = "Retail"
 
 # Get a list of all publicly traded companies in the retail sector
-retail_tickers = db.raw_sql("select ticker from comp.security where ggroup = '40' and prccq > 0").sort_values("ticker")["ticker"].tolist()
+retail_tickers = pd.read_csv("https://www.nasdaq.com/market-activity/stocks/screener?sector=Retail&marketCap=Large&symbol=&exchange=&letter=&render=download").set_index("Symbol").index.tolist()
 
 # Screen companies based on criteria
 selected_tickers = []
 for ticker in retail_tickers:
     try:
         # Get financial data
-        data = db.raw_sql(f"select date, prccq, epsfxq, cshoq, totliabq, seqq from comp.funda where gvkey = (select gvkey from comp.security where ticker = '{ticker}') and indfmt='INDL' and datafmt='STD' and popsrc='D' and consol='C' and curcdq='USD'")
-        data = data.set_index("date")
-        data = data.sort_index()
+        data = yf.download(ticker, period="max")
         
         # Get financial ratios
-        pe_ratio = data["prccq"][-1] / data["epsfxq"][-1]
-        market_cap = data["prccq"][-1] * data["cshoq"][-1]
-        beta = db.raw_sql(f"select beta from crsp.msf where permno in (select permno from crsp.msenames where ticker = '{ticker}') and date >= (select max(date)-365 from crsp.msf where permno in (select permno from crsp.msenames where ticker = '{ticker}')) and date <= (select max(date) from crsp.msf where permno in (select permno from crsp.msenames where ticker = '{ticker}'))")["beta"].iloc[-1]
-        debt_to_equity = data["totliabq"][-1] / data["seqq"][-1]
+        pe_ratio = data["Close"][-1] / data["Earnings/Share"][-1]
+        market_cap = data["Close"][-1] * data["Shares Outstanding"][-1]
+        beta = data["Close"].pct_change().rolling(window=252).cov(data["SPY"].pct_change().rolling(window=252))[-1]["SPY"] / data["SPY"].pct_change().rolling(window=252).var()[-1]
+        debt_to_equity = data["Total Liab"][-1] / data["Total Equity"][-1]
         
         # Check if criteria are met
         if (pe_ratio < pe_ratio_max) and (market_cap > market_cap_min) and (beta > beta_min) and (debt_to_equity == debt_ratio):
@@ -40,3 +35,4 @@ for ticker in retail_tickers:
 selected_tickers = np.random.choice(selected_tickers, size=5, replace=False)
 
 print(selected_tickers)
+
